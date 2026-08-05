@@ -10,6 +10,8 @@ import com.facebook.react.bridge.ReactMethod
 import com.facebook.react.bridge.ReadableMap
 import com.facebook.react.bridge.WritableMap
 import com.facebook.react.modules.core.DeviceEventManagerModule
+import com.linkflow.sdk.LinkFlowConfig
+import com.linkflow.sdk.LinkFlowConsent
 import com.linkflow.sdk.LinkFlowSDK
 
 /**
@@ -29,13 +31,43 @@ class LinkFlowSDKModule(
     override fun getName(): String = NAME
 
     @ReactMethod
-    fun initialize(apiBaseURL: String, enableLogging: Boolean, promise: Promise) {
+    fun initialize(apiBaseURL: String, enableLogging: Boolean, options: ReadableMap?, promise: Promise) {
         try {
-            val sdk = LinkFlowSDK.initialize(reactContext.applicationContext, apiBaseURL, enableLogging)
+            val config = LinkFlowConfig(
+                apiBaseUrl = apiBaseURL,
+                appKey = options?.takeIf { it.hasKey("appKey") }?.getString("appKey"),
+                enableLogging = enableLogging,
+                requireConsent = options?.takeIf { it.hasKey("requireConsent") }
+                    ?.getBoolean("requireConsent") ?: false,
+                collectAdvertisingId = options?.takeIf { it.hasKey("collectAdvertisingId") }
+                    ?.getBoolean("collectAdvertisingId") ?: true,
+            )
+            val sdk = LinkFlowSDK.initialize(reactContext.applicationContext, config)
             sdk.setAttributionCallback(this)
             promise.resolve(null)
         } catch (e: Exception) {
             promise.reject("init_failed", e.message, e)
+        }
+    }
+
+    @ReactMethod
+    fun setConsent(attribution: Boolean, advertisingId: Boolean, promise: Promise) {
+        try {
+            LinkFlowSDK.getInstance().setConsent(
+                LinkFlowConsent(attribution = attribution, advertisingId = advertisingId)
+            )
+            promise.resolve(null)
+        } catch (e: Exception) {
+            promise.reject("set_consent_failed", e.message, e)
+        }
+    }
+
+    @ReactMethod
+    fun pendingEventCount(promise: Promise) {
+        try {
+            promise.resolve(LinkFlowSDK.getInstance().pendingEventCount())
+        } catch (e: Exception) {
+            promise.reject("pending_count_failed", e.message, e)
         }
     }
 
@@ -63,11 +95,12 @@ class LinkFlowSDKModule(
     @ReactMethod
     fun handleDeepLink(url: String, promise: Promise) {
         try {
-            // The canonical SDK does not expose a public deep-link entry point
-            // for already-running apps, so emit the event directly to JS.
-            val map = Arguments.createMap()
-            map.putString("url", url)
-            emit(EVENT_DEEPLINK, map)
+            // Routes through the SDK, which emits onDeepLinkReceived back to us.
+            // This used to emit the JS event directly because the Android SDK had
+            // no public deep-link entry point — so anything the SDK does with a
+            // deep link (and any future handling) was skipped on Android while
+            // working on iOS.
+            LinkFlowSDK.getInstance().handleDeepLink(Uri.parse(url))
             promise.resolve(null)
         } catch (e: Exception) {
             promise.reject("handle_deeplink_failed", e.message, e)
@@ -88,7 +121,9 @@ class LinkFlowSDKModule(
     @ReactMethod
     fun getAttributionResult(promise: Promise) {
         try {
-            val r = lastResult
+            // Fall back to the SDK's persisted result so a JS reload — which
+            // clears this module's in-memory cache — does not lose it.
+            val r = lastResult ?: LinkFlowSDK.getInstance().getAttributionResult()
             if (r == null) {
                 promise.resolve(null)
             } else {
@@ -137,6 +172,9 @@ class LinkFlowSDKModule(
         if (r.deepLinkValue != null) map.putString("deepLinkValue", r.deepLinkValue)
         map.putMap("deepLinkParams", mapToWritable(r.deepLinkParams))
         map.putMap("campaignData", mapToWritable(r.campaignData))
+        if (r.attributionMethod != null) map.putString("attributionMethod", r.attributionMethod)
+        if (r.confidence != null) map.putDouble("confidence", r.confidence)
+        map.putBoolean("isReinstall", r.isReinstall)
         return map
     }
 
