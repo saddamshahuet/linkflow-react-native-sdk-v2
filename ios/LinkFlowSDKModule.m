@@ -5,7 +5,16 @@
 
 RCT_EXTERN_METHOD(initialize:(NSString *)apiBaseURL
                   enableLogging:(BOOL)enableLogging
+                  options:(nullable NSDictionary *)options
                   resolver:(RCTPromiseResolveBlock)resolve
+                  rejecter:(RCTPromiseRejectBlock)reject)
+
+RCT_EXTERN_METHOD(setConsent:(BOOL)attribution
+                  advertisingId:(BOOL)advertisingId
+                  resolver:(RCTPromiseResolveBlock)resolve
+                  rejecter:(RCTPromiseRejectBlock)reject)
+
+RCT_EXTERN_METHOD(pendingEventCount:(RCTPromiseResolveBlock)resolve
                   rejecter:(RCTPromiseRejectBlock)reject)
 
 RCT_EXTERN_METHOD(handleAppLaunch:(NSString *)initialUrl

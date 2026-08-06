@@ -5,6 +5,39 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.0] - 2026-08-05
+
+Vendored native sources updated to Android SDK 2.0.0 and iOS SDK 2.0.0. See
+those changelogs for the full set of attribution fixes; the highlights are that
+Android deterministic attribution (Play Install Referrer) and iOS identifier
+reporting both work now, and neither did before.
+
+### Fixed
+- **`handleDeepLink` was a no-op on Android.** The bridge emitted the JS event
+  directly with a comment noting the Android SDK had no public deep-link entry
+  point, so JS-side deep link handling silently did nothing on Android while
+  working on iOS. It now routes through the SDK, which has one.
+- `getAttributionResult()` falls back to the native SDK's persisted result, so a
+  JS reload — which clears the bridge module's in-memory cache — no longer
+  returns `null` for an install that was attributed.
+- `npm test` could never run: the package declared a Jest config but shipped no
+  Babel config, so any test file failed to transform. Added `babel.config.js`.
+
+### Added
+- `appKey`, `requireConsent` and `collectAdvertisingId` in `LinkFlowConfig`,
+  passed through to both native SDKs.
+- `LinkFlow.setConsent({ attribution, advertisingId })` for GDPR/DMA/CCPA
+  gating. Launches requested before consent are buffered and replayed.
+- `LinkFlow.pendingEventCount()` — depth of the native offline event queue.
+- `AttributionResult` now carries `attributionMethod`, `confidence` and
+  `isReinstall`, with an exported `AttributionMethod` union type.
+- Jest tests covering the native bridge contract.
+
+### Deprecated
+- `setAttributionCallback(callback)` remains available. The 1.1.0 changelog
+  slated it for removal in 2.0.0; that is deferred to 3.0.0 so this release
+  stays a drop-in fix for attribution rather than a source-breaking change.
+
 ## [1.1.0] - 2026-05-02
 
 ### Added

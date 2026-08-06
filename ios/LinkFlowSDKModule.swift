@@ -26,16 +26,49 @@ public class LinkFlowSDKModule: RCTEventEmitter {
 
     // MARK: - Exposed methods
 
-    @objc(initialize:enableLogging:resolver:rejecter:)
+    @objc(initialize:enableLogging:options:resolver:rejecter:)
     func initialize(_ apiBaseURL: String,
                     enableLogging: Bool,
+                    options: NSDictionary?,
                     resolver resolve: @escaping RCTPromiseResolveBlock,
                     rejecter reject: @escaping RCTPromiseRejectBlock) {
-        let sdk = LinkFlowSDK.initialize(apiBaseURL: apiBaseURL, enableLogging: enableLogging)
+        let config = LinkFlowConfig(
+            apiBaseURL: apiBaseURL,
+            appKey: options?["appKey"] as? String,
+            enableLogging: enableLogging,
+            requireConsent: options?["requireConsent"] as? Bool ?? false,
+            collectAdvertisingID: options?["collectAdvertisingId"] as? Bool ?? true
+        )
+        let sdk = LinkFlowSDK.initialize(config: config)
         sdk.setAttributionCallback { [weak self] result in
             self?.handleResult(result)
         }
         resolve(nil)
+    }
+
+    @objc(setConsent:advertisingId:resolver:rejecter:)
+    func setConsent(_ attribution: Bool,
+                    advertisingId: Bool,
+                    resolver resolve: @escaping RCTPromiseResolveBlock,
+                    rejecter reject: @escaping RCTPromiseRejectBlock) {
+        do {
+            try LinkFlowSDK.shared().setConsent(
+                LinkFlowConsent(attribution: attribution, advertisingID: advertisingId)
+            )
+            resolve(nil)
+        } catch {
+            reject("not_initialized", error.localizedDescription, error)
+        }
+    }
+
+    @objc(pendingEventCount:rejecter:)
+    func pendingEventCount(_ resolve: @escaping RCTPromiseResolveBlock,
+                           rejecter reject: @escaping RCTPromiseRejectBlock) {
+        do {
+            resolve(try LinkFlowSDK.shared().pendingEventCount())
+        } catch {
+            reject("not_initialized", error.localizedDescription, error)
+        }
     }
 
     @objc(handleAppLaunch:resolver:rejecter:)
@@ -105,11 +138,16 @@ public class LinkFlowSDKModule: RCTEventEmitter {
     @objc(getAttributionResult:rejecter:)
     func getAttributionResult(_ resolve: @escaping RCTPromiseResolveBlock,
                               rejecter reject: @escaping RCTPromiseRejectBlock) {
-        guard let cached = lastResult else {
+        // Fall back to the SDK's persisted result so a JS reload — which clears
+        // this module's in-memory cache — does not lose it.
+        var result = lastResult
+        if result == nil { result = try? LinkFlowSDK.shared().getAttributionResult() }
+
+        guard let result else {
             resolve(nil)
             return
         }
-        resolve(serialize(cached))
+        resolve(serialize(result))
     }
 
     // MARK: - Internal
@@ -131,9 +169,13 @@ public class LinkFlowSDKModule: RCTEventEmitter {
         var out: [String: Any] = [
             "attributed": result.attributed,
             "deepLinkParams": result.deepLinkParams,
-            "campaignData": result.campaignData
+            "campaignData": result.campaignData,
+            "isReinstall": result.isReinstall
         ]
         if let v = result.deepLinkValue { out["deepLinkValue"] = v }
+        if let m = result.attributionMethod { out["attributionMethod"] = m }
+        // -1 is the ObjC-representable stand-in for "no confidence reported".
+        if result.confidence >= 0 { out["confidence"] = result.confidence }
         return out
     }
 }

@@ -36,7 +36,26 @@ export interface AttributionResult {
   deepLinkValue?: string;
   deepLinkParams?: Record<string, any>;
   campaignData?: Record<string, any>;
+  /**
+   * How the install was matched: `install_referrer` and `click_token` are
+   * deterministic, `device_id` near-deterministic, `fingerprint` probabilistic.
+   */
+  attributionMethod?: AttributionMethod;
+  /**
+   * Match confidence, 0–1. Deterministic matches report 1; fingerprint matches
+   * report a score computed from how many device signals corroborated the match.
+   * Absent when the server did not report one.
+   */
+  confidence?: number;
+  /** True when this device had already installed the app before. */
+  isReinstall?: boolean;
 }
+
+export type AttributionMethod =
+  | 'install_referrer'
+  | 'click_token'
+  | 'device_id'
+  | 'fingerprint';
 
 export interface DeepLinkEvent {
   url: string;
@@ -49,6 +68,26 @@ export interface LinkFlowError {
 export interface LinkFlowConfig {
   apiBaseURL?: string;
   enableLogging?: boolean;
+  /**
+   * Public app key from the dashboard (App Keys). Embeddable in the app bundle.
+   * Optional today; required once the server enforces app keys.
+   */
+  appKey?: string;
+  /**
+   * When true the SDK collects and sends nothing until `setConsent` is called.
+   * A launch requested while consent is pending is buffered and replayed on
+   * grant, so no attribution is lost to the consent prompt.
+   */
+  requireConsent?: boolean;
+  /** Whether the SDK may read the advertising identifier (GAID / IDFA). */
+  collectAdvertisingId?: boolean;
+}
+
+export interface LinkFlowConsent {
+  /** Permits attribution resolution and event reporting. */
+  attribution: boolean;
+  /** Permits reading the advertising identifier. Defaults to `attribution`. */
+  advertisingId?: boolean;
 }
 
 export type AttributionCallback = (result: AttributionResult) => void;
@@ -79,10 +118,19 @@ class LinkFlow {
       console.warn('[LinkFlow] SDK already initialized');
       return;
     }
-    const { apiBaseURL = 'https://thelinkflow.app', enableLogging = false } =
-      config;
+    const {
+      apiBaseURL = 'https://thelinkflow.app',
+      enableLogging = false,
+      appKey,
+      requireConsent = false,
+      collectAdvertisingId = true,
+    } = config;
 
-    await NativeLinkFlow.initialize(apiBaseURL, enableLogging);
+    await NativeLinkFlow.initialize(apiBaseURL, enableLogging, {
+      appKey,
+      requireConsent,
+      collectAdvertisingId,
+    });
     this.initialized = true;
 
     // Cache the most recent attribution result so consumers that subscribe
@@ -178,6 +226,32 @@ class LinkFlow {
   /** Returns the cached result synchronously without making a native call. */
   static getLastAttributionResult(): AttributionResult | null {
     return this.lastResult;
+  }
+
+  /**
+   * Records the user's consent decision.
+   *
+   * Only needed when the SDK was initialized with `requireConsent: true`.
+   * Granting consent replays any launch buffered while waiting.
+   */
+  static async setConsent(consent: LinkFlowConsent): Promise<void> {
+    this.assertInitialized();
+    await NativeLinkFlow.setConsent(
+      consent.attribution,
+      consent.advertisingId ?? consent.attribution
+    );
+  }
+
+  /**
+   * Number of events queued for delivery.
+   *
+   * Events are persisted and retried, so a non-zero count simply means delivery
+   * has not completed yet — typically because the device is offline or
+   * attribution has not yet produced an install id.
+   */
+  static async pendingEventCount(): Promise<number> {
+    this.assertInitialized();
+    return NativeLinkFlow.pendingEventCount();
   }
 
   /** Tear down all internal listeners. */

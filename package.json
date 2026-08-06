@@ -1,6 +1,6 @@
 {
   "name": "@linkflow/react-native-sdk",
-  "version": "1.1.0",
+  "version": "2.0.0",
   "description": "LinkFlow SDK for React Native - Mobile attribution and deep linking",
   "main": "lib/commonjs/index",
   "module": "lib/module/index",
@@ -60,6 +60,7 @@
   },
   "devDependencies": {
     "@react-native-community/eslint-config": "^3.2.0",
+    "@types/jest": "^29.5.14",
     "@types/react": "~18.2.45",
     "@types/react-native": "0.72.8",
     "eslint": "^8.56.0",
