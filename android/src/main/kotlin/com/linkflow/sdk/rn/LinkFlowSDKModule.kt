@@ -62,6 +62,39 @@ class LinkFlowSDKModule(
         }
     }
 
+    /** 2.1.0+: consent with granular GDPR/TCF and consent-mode signals. */
+    @ReactMethod
+    fun setConsentWithSignals(attribution: Boolean, advertisingId: Boolean, signals: ReadableMap?, promise: Promise) {
+        try {
+            fun bool(key: String): Boolean? =
+                signals?.takeIf { it.hasKey(key) && !it.isNull(key) }?.getBoolean(key)
+            LinkFlowSDK.getInstance().setConsent(
+                LinkFlowConsent(
+                    attribution = attribution,
+                    advertisingId = advertisingId,
+                    gdprApplies = bool("gdprApplies"),
+                    tcfString = signals?.takeIf { it.hasKey("tcfString") && !it.isNull("tcfString") }?.getString("tcfString"),
+                    adUserData = bool("adUserData"),
+                    adPersonalization = bool("adPersonalization"),
+                )
+            )
+            promise.resolve(null)
+        } catch (e: Exception) {
+            promise.reject("set_consent_failed", e.message, e)
+        }
+    }
+
+    /** 2.1.0+: binds the host app's user id to the install. */
+    @ReactMethod
+    fun setCustomerUserId(customerUserId: String?, promise: Promise) {
+        try {
+            LinkFlowSDK.getInstance().setCustomerUserId(customerUserId)
+            promise.resolve(null)
+        } catch (e: Exception) {
+            promise.reject("set_customer_user_id_failed", e.message, e)
+        }
+    }
+
     @ReactMethod
     fun pendingEventCount(promise: Promise) {
         try {

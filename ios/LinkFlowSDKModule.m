@@ -14,6 +14,16 @@ RCT_EXTERN_METHOD(setConsent:(BOOL)attribution
                   resolver:(RCTPromiseResolveBlock)resolve
                   rejecter:(RCTPromiseRejectBlock)reject)
 
+RCT_EXTERN_METHOD(setConsentWithSignals:(BOOL)attribution
+                  advertisingId:(BOOL)advertisingId
+                  signals:(nullable NSDictionary *)signals
+                  resolver:(RCTPromiseResolveBlock)resolve
+                  rejecter:(RCTPromiseRejectBlock)reject)
+
+RCT_EXTERN_METHOD(setCustomerUserId:(nullable NSString *)customerUserId
+                  resolver:(RCTPromiseResolveBlock)resolve
+                  rejecter:(RCTPromiseRejectBlock)reject)
+
 RCT_EXTERN_METHOD(pendingEventCount:(RCTPromiseResolveBlock)resolve
                   rejecter:(RCTPromiseRejectBlock)reject)
 

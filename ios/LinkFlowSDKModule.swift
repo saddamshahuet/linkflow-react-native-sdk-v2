@@ -37,7 +37,8 @@ public class LinkFlowSDKModule: RCTEventEmitter {
             appKey: options?["appKey"] as? String,
             enableLogging: enableLogging,
             requireConsent: options?["requireConsent"] as? Bool ?? false,
-            collectAdvertisingID: options?["collectAdvertisingId"] as? Bool ?? true
+            collectAdvertisingID: options?["collectAdvertisingId"] as? Bool ?? true,
+            manageConversionValues: options?["manageConversionValues"] as? Bool ?? false
         )
         let sdk = LinkFlowSDK.initialize(config: config)
         sdk.setAttributionCallback { [weak self] result in
@@ -55,6 +56,39 @@ public class LinkFlowSDKModule: RCTEventEmitter {
             try LinkFlowSDK.shared().setConsent(
                 LinkFlowConsent(attribution: attribution, advertisingID: advertisingId)
             )
+            resolve(nil)
+        } catch {
+            reject("not_initialized", error.localizedDescription, error)
+        }
+    }
+
+    @objc(setConsentWithSignals:advertisingId:signals:resolver:rejecter:)
+    func setConsentWithSignals(_ attribution: Bool,
+                               advertisingId: Bool,
+                               signals: NSDictionary?,
+                               resolver resolve: @escaping RCTPromiseResolveBlock,
+                               rejecter reject: @escaping RCTPromiseRejectBlock) {
+        do {
+            try LinkFlowSDK.shared().setConsent(LinkFlowConsent(
+                attribution: attribution,
+                advertisingID: advertisingId,
+                gdprApplies: signals?["gdprApplies"] as? Bool,
+                tcfString: signals?["tcfString"] as? String,
+                adUserData: signals?["adUserData"] as? Bool,
+                adPersonalization: signals?["adPersonalization"] as? Bool
+            ))
+            resolve(nil)
+        } catch {
+            reject("not_initialized", error.localizedDescription, error)
+        }
+    }
+
+    @objc(setCustomerUserId:resolver:rejecter:)
+    func setCustomerUserId(_ customerUserId: NSString?,
+                           resolver resolve: @escaping RCTPromiseResolveBlock,
+                           rejecter reject: @escaping RCTPromiseRejectBlock) {
+        do {
+            try LinkFlowSDK.shared().setCustomerUserId(customerUserId as String?)
             resolve(nil)
         } catch {
             reject("not_initialized", error.localizedDescription, error)

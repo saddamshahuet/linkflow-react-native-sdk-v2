@@ -18,7 +18,9 @@ Pod::Spec.new do |s|
   s.swift_version = '5.0'
   s.requires_arc = true
 
-  s.frameworks = 'UIKit', 'Foundation', 'AdSupport', 'AppTrackingTransparency'
+  s.frameworks = 'UIKit', 'Foundation', 'AdSupport', 'AppTrackingTransparency', 'StoreKit'
+  # iOS 17.4+ only; weak so the SDK still loads on older systems.
+  s.weak_frameworks = 'AdAttributionKit'
 
   # Pull in React Native using the modern helper when available so the pod
   # works with both the old and new React Native architectures without any

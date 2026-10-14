@@ -23,6 +23,8 @@ jest.mock('react-native', () => {
         trackEvent: jest.fn().mockResolvedValue(undefined),
         getAttributionResult: jest.fn().mockResolvedValue(null),
         setConsent: jest.fn().mockResolvedValue(undefined),
+        setConsentWithSignals: jest.fn().mockResolvedValue(undefined),
+        setCustomerUserId: jest.fn().mockResolvedValue(undefined),
         pendingEventCount: jest.fn().mockResolvedValue(0),
         addListener: jest.fn(),
         removeListeners: jest.fn(),
@@ -69,6 +71,7 @@ describe('LinkFlow', () => {
           appKey: 'lfa_test',
           requireConsent: true,
           collectAdvertisingId: false,
+          manageConversionValues: false,
         }
       );
     });
@@ -83,6 +86,7 @@ describe('LinkFlow', () => {
           appKey: undefined,
           requireConsent: false,
           collectAdvertisingId: true,
+          manageConversionValues: false,
         }
       );
     });
@@ -116,6 +120,55 @@ describe('LinkFlow', () => {
     it('propagates a full refusal', async () => {
       await LinkFlow.setConsent({ attribution: false });
       expect(mockNative.setConsent).toHaveBeenCalledWith(false, false);
+    });
+
+    it('keeps the 2.0 native call when no granular signals are given', async () => {
+      await LinkFlow.setConsent({ attribution: true });
+      expect(mockNative.setConsentWithSignals).not.toHaveBeenCalled();
+    });
+
+    it('forwards granular consent signals (2.1.0+)', async () => {
+      await LinkFlow.setConsent({
+        attribution: true,
+        gdprApplies: true,
+        tcfString: 'CP-x',
+        adPersonalization: false,
+      });
+      expect(mockNative.setConsentWithSignals).toHaveBeenCalledWith(true, true, {
+        gdprApplies: true,
+        tcfString: 'CP-x',
+        adPersonalization: false,
+      });
+      expect(mockNative.setConsent).not.toHaveBeenCalled();
+    });
+
+    it('falls back to the 2.0 native method on an older native build', async () => {
+      const saved = mockNative.setConsentWithSignals;
+      delete mockNative.setConsentWithSignals;
+      await LinkFlow.setConsent({ attribution: true, adUserData: true });
+      expect(mockNative.setConsent).toHaveBeenCalledWith(true, true);
+      mockNative.setConsentWithSignals = saved;
+    });
+  });
+
+  describe('setCustomerUserId', () => {
+    it('forwards the id and null on logout', async () => {
+      await LinkFlow.initialize();
+      await LinkFlow.setCustomerUserId('user-1');
+      await LinkFlow.setCustomerUserId(null);
+      expect(mockNative.setCustomerUserId).toHaveBeenNthCalledWith(1, 'user-1');
+      expect(mockNative.setCustomerUserId).toHaveBeenNthCalledWith(2, null);
+    });
+  });
+
+  describe('manageConversionValues', () => {
+    it('is forwarded to native when enabled', async () => {
+      await LinkFlow.initialize({ appKey: 'lfa_x', manageConversionValues: true });
+      expect(mockNative.initialize).toHaveBeenCalledWith(
+        'https://thelinkflow.app',
+        false,
+        expect.objectContaining({ manageConversionValues: true })
+      );
     });
   });
 
