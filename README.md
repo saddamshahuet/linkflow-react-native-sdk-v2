@@ -125,6 +125,17 @@ const sub = LinkFlow.addDeepLinkListener(({ url }) => {
 sub.remove();
 ```
 
+## What's new in 2.1
+
+```ts
+await LinkFlow.initialize({ appKey: 'lfa_...', manageConversionValues: true }); // iOS: managed SKAN/AAK values
+await LinkFlow.setCustomerUserId('user-123');                                    // null on logout
+await LinkFlow.setConsent({ attribution: true, gdprApplies: true, tcfString, adUserData: true, adPersonalization: false });
+```
+
+All additions are optional; 2.0 code keeps working, and the JS layer falls back
+to the 2.0 native methods if the app's native build is older.
+
 ## API Reference
 
 ### `LinkFlow.initialize(config)`

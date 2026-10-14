@@ -81,6 +81,13 @@ export interface LinkFlowConfig {
   requireConsent?: boolean;
   /** Whether the SDK may read the advertising identifier (GAID / IDFA). */
   collectAdvertisingId?: boolean;
+  /**
+   * iOS only (2.1.0+): let the SDK set SKAdNetwork / AdAttributionKit conversion
+   * values from the schema approved in the LinkFlow dashboard. Off by default so
+   * an app that manages its own conversion values is never overridden. Requires
+   * `appKey`. Ignored on Android.
+   */
+  manageConversionValues?: boolean;
 }
 
 export interface LinkFlowConsent {
@@ -88,6 +95,14 @@ export interface LinkFlowConsent {
   attribution: boolean;
   /** Permits reading the advertising identifier. Defaults to `attribution`. */
   advertisingId?: boolean;
+  /** 2.1.0+: true when the user is subject to GDPR / the DMA. */
+  gdprApplies?: boolean;
+  /** 2.1.0+: IAB TCF v2 consent string from your CMP. */
+  tcfString?: string;
+  /** 2.1.0+: Google consent mode v2 `ad_user_data`. */
+  adUserData?: boolean;
+  /** 2.1.0+: Google consent mode v2 `ad_personalization`. */
+  adPersonalization?: boolean;
 }
 
 export type AttributionCallback = (result: AttributionResult) => void;
@@ -124,12 +139,14 @@ class LinkFlow {
       appKey,
       requireConsent = false,
       collectAdvertisingId = true,
+      manageConversionValues = false,
     } = config;
 
     await NativeLinkFlow.initialize(apiBaseURL, enableLogging, {
       appKey,
       requireConsent,
       collectAdvertisingId,
+      manageConversionValues,
     });
     this.initialized = true;
 
@@ -236,10 +253,32 @@ class LinkFlow {
    */
   static async setConsent(consent: LinkFlowConsent): Promise<void> {
     this.assertInitialized();
-    await NativeLinkFlow.setConsent(
-      consent.attribution,
-      consent.advertisingId ?? consent.attribution
-    );
+    const advertisingId = consent.advertisingId ?? consent.attribution;
+    const signals = consentSignals(consent);
+    // The granular-signal method is 2.1.0+ native code; fall back to the
+    // original method if the native side is older (e.g. a stale native build).
+    if (signals && typeof NativeLinkFlow.setConsentWithSignals === 'function') {
+      await NativeLinkFlow.setConsentWithSignals(
+        consent.attribution,
+        advertisingId,
+        signals
+      );
+      return;
+    }
+    await NativeLinkFlow.setConsent(consent.attribution, advertisingId);
+  }
+
+  /**
+   * Associates your own user id with this install (2.1.0+), e.g. after login.
+   * Pass `null` on logout to stop attaching it to new events.
+   */
+  static async setCustomerUserId(customerUserId: string | null): Promise<void> {
+    this.assertInitialized();
+    if (typeof NativeLinkFlow.setCustomerUserId !== 'function') {
+      console.warn('[LinkFlow] setCustomerUserId requires native SDK 2.1.0+; rebuild the app.');
+      return;
+    }
+    await NativeLinkFlow.setCustomerUserId(customerUserId);
   }
 
   /**
@@ -284,6 +323,18 @@ class LinkFlow {
       );
     }
   }
+}
+
+/** The granular consent fields that were actually supplied, or null when none were. */
+export function consentSignals(
+  consent: LinkFlowConsent
+): Record<string, string | boolean> | null {
+  const out: Record<string, string | boolean> = {};
+  if (consent.gdprApplies !== undefined) out.gdprApplies = consent.gdprApplies;
+  if (consent.tcfString !== undefined) out.tcfString = consent.tcfString;
+  if (consent.adUserData !== undefined) out.adUserData = consent.adUserData;
+  if (consent.adPersonalization !== undefined) out.adPersonalization = consent.adPersonalization;
+  return Object.keys(out).length > 0 ? out : null;
 }
 
 export default LinkFlow;
