@@ -21,6 +21,20 @@ import AppTrackingTransparency
 
 // MARK: - Attribution result
 
+/// How the server matched the install (2.2.0+). See ``AttributionResult/match``.
+@objc public class AttributionMatch: NSObject {
+    /// "install_referrer", "click_token", "advertising_id", "probabilistic" or "organic".
+    @objc public let method: String
+    /// 0.0–1.0, or -1 when not reported (`Double?` is not representable in ObjC).
+    @objc public let confidence: Double
+
+    init(parsed: ParsedMatch) {
+        self.method = parsed.method
+        self.confidence = parsed.confidence ?? -1
+        super.init()
+    }
+}
+
 /// Attribution result delivered to the callback.
 @objc public class AttributionResult: NSObject {
     @objc public let attributed: Bool
@@ -39,6 +53,10 @@ import AppTrackingTransparency
     /// True when this device had already installed the app before.
     @objc public let isReinstall: Bool
 
+    /// 2.2.0+: how the server matched the install, when it reports a `match`
+    /// object. Nil against older servers.
+    @objc public let match: AttributionMatch?
+
     init(
         attributed: Bool,
         deepLinkValue: String? = nil,
@@ -47,7 +65,8 @@ import AppTrackingTransparency
         error: Error? = nil,
         attributionMethod: String? = nil,
         confidence: Double? = nil,
-        isReinstall: Bool = false
+        isReinstall: Bool = false,
+        match: AttributionMatch? = nil
     ) {
         self.attributed = attributed
         self.deepLinkValue = deepLinkValue
@@ -57,6 +76,7 @@ import AppTrackingTransparency
         self.attributionMethod = attributionMethod
         self.confidence = confidence ?? -1
         self.isReinstall = isReinstall
+        self.match = match
         super.init()
     }
 
@@ -69,13 +89,19 @@ import AppTrackingTransparency
             error: nil,
             attributionMethod: parsed.attributionMethod,
             confidence: parsed.confidence,
-            isReinstall: parsed.isReinstall
+            isReinstall: parsed.isReinstall,
+            match: parsed.match.map(AttributionMatch.init(parsed:))
         )
     }
 }
 
 /// Attribution callback handler.
 public typealias AttributionCallback = (AttributionResult) -> Void
+
+/// Direct deep link handler (2.2.0+), called for universal links and custom
+/// URLs passed to the SDK. Direct links are still also delivered to the
+/// attribution callback, exactly as in 2.1.
+public typealias DeepLinkCallback = (URL) -> Void
 
 // MARK: - SDK
 
@@ -112,9 +138,17 @@ public typealias AttributionCallback = (AttributionResult) -> Void
     private var pendingLaunchURL: URL?
     private var hasPendingLaunch = false
     private var cachedResult: AttributionResult?
+    private var deepLinkCallback: DeepLinkCallback?
+
+    /// 2.2.0+: deep links queued while the host app holds delivery. Not held by default.
+    private enum HeldDeepLink {
+        case deferred(AttributionResult)
+        case direct(URL)
+    }
+    private let heldDeepLinks = DeepLinkHoldQueue<HeldDeepLink>()
 
     /// Reported to the server as `sdkVersion`.
-    @objc public static let sdkVersion = "2.1.0"
+    @objc public static let sdkVersion = "2.2.0"
 
     // MARK: Initialization
 
@@ -171,6 +205,83 @@ public typealias AttributionCallback = (AttributionResult) -> Void
         attributionCallback = callback
         stateLock.unlock()
         return self
+    }
+
+    /// Registers a handler for direct deep links (2.2.0+). Optional: direct
+    /// links keep reaching the attribution callback as before.
+    @discardableResult
+    @objc public func setDeepLinkCallback(_ callback: @escaping DeepLinkCallback) -> LinkFlowSDK {
+        stateLock.lock()
+        deepLinkCallback = callback
+        stateLock.unlock()
+        return self
+    }
+
+    // MARK: Deep link hold / release (2.2.0+)
+
+    /// Holds deep-link delivery until ``releaseDeepLinks()``, e.g. while a
+    /// splash screen, onboarding or login is showing.
+    ///
+    /// While held, the deferred deep link (an attributed result carrying a link)
+    /// and direct deep links are queued instead of delivered, keeping only the
+    /// latest of each kind. Attribution, events and ``getAttributionResult()``
+    /// are unaffected. Not held by default.
+    @objc public func holdDeepLinks() {
+        heldDeepLinks.hold()
+        log("Deep link delivery held")
+    }
+
+    /// Stops holding and delivers what was queued, in arrival order. Safe to
+    /// call when not held.
+    @objc public func releaseDeepLinks() {
+        let queued = heldDeepLinks.release()
+        log("Deep link delivery released (\(queued.count) queued)")
+        for item in queued {
+            switch item {
+            case .deferred(let result): deliver(result)
+            case .direct(let url): deliverDirect(url)
+            }
+        }
+    }
+
+    /// True between ``holdDeepLinks()`` and ``releaseDeepLinks()``.
+    @objc public func isHoldingDeepLinks() -> Bool {
+        heldDeepLinks.isHeld
+    }
+
+    // MARK: Diagnostics (2.2.0+)
+
+    /// A support snapshot: SDK version, API host, consent state, whether an
+    /// install id exists, the last attribution outcome, queued events and held
+    /// deep links. Contains no identifiers or personal data.
+    public func diagnostics() -> LinkFlowDiagnostics {
+        let (granted, pendingLaunch, callbackSet) = stateLock.withLock {
+            (consent, hasPendingLaunch, attributionCallback != nil)
+        }
+        return LinkFlowDiagnostics(
+            sdkVersion: LinkFlowSDK.sdkVersion,
+            apiHost: LinkFlowDiagnostics.host(of: config.apiBaseURL),
+            appKeyConfigured: !(config.appKey ?? "").isEmpty,
+            consentState: LinkFlowDiagnostics.consentState(requireConsent: config.requireConsent, consent: granted),
+            advertisingIDConsent: granted?.advertisingID,
+            launchPendingConsent: pendingLaunch,
+            hasInstallID: store.installID != nil,
+            hasInstallToken: store.installToken != nil,
+            customerUserIDSet: store.customerUserID != nil,
+            attributionComplete: store.attributionComplete,
+            lastResolveAt: store.lastResolveAt,
+            lastResolveResult: store.lastResolveResult.flatMap(ResolveResultCategory.init(rawValue:)),
+            lastMatchMethod: store.lastMatchMethod,
+            queuedEventCount: eventQueue.count(),
+            deepLinksHeld: heldDeepLinks.isHeld,
+            heldDeepLinkCount: heldDeepLinks.count,
+            attributionCallbackSet: callbackSet
+        )
+    }
+
+    /// Objective-C / React Native form of ``diagnostics()``.
+    @objc public func getDiagnostics() -> [String: Any] {
+        diagnostics().dictionary
     }
 
     // MARK: Consent
@@ -370,6 +481,7 @@ public typealias AttributionCallback = (AttributionResult) -> Void
         switch await http.send(path: "/api/attribution/resolve", method: "POST", body: body) {
         case .success(let data):
             guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+                store.recordResolve(.invalidResponse)
                 deliver(AttributionResult(attributed: false, error: LinkFlowError.invalidResponse))
                 return
             }
@@ -379,12 +491,14 @@ public typealias AttributionCallback = (AttributionResult) -> Void
             // A 4xx will never succeed; stop retrying on future launches.
             log("Attribution rejected (HTTP \(code)); not retrying")
             store.attributionComplete = true
+            store.recordResolve(.rejected)
             deliver(AttributionResult(attributed: false, error: LinkFlowError.httpError(code)))
 
         case .transientFailure(_, let error):
             // Leave the flag unset so the next launch tries again. This is the case
             // the old implementation lost permanently.
             log("Attribution could not be delivered; will retry on next launch")
+            store.recordResolve(.networkError)
             deliver(AttributionResult(attributed: false, error: error ?? LinkFlowError.invalidResponse))
         }
     }
@@ -404,16 +518,46 @@ public typealias AttributionCallback = (AttributionResult) -> Void
             store.lastResultJSON = json
             // The resolve request already carried the customer user id, if set.
             store.pendingIdentify = false
+        } else if let installID = parsed.installID {
+            // 2.2 servers also create an install for organic (unmatched) users and
+            // return its id and token, so organic users can report events, revenue
+            // and identify. Older servers return neither, and nothing changes.
+            store.installID = installID
+            if let token = parsed.installToken {
+                store.installToken = token
+            }
         }
+
+        store.recordResolve(parsed.category, matchMethod: parsed.match?.method)
 
         let result = AttributionResult(parsed: parsed)
         stateLock.withLock { cachedResult = result }
 
-        log("Attribution resolved: attributed=\(parsed.attributed) method=\(parsed.attributionMethod ?? "none")")
+        log("Attribution resolved: attributed=\(parsed.attributed) method=\(parsed.attributionMethod ?? "none") match=\(parsed.match?.method ?? "none")")
+
+        if parsed.carriesDeepLink, heldDeepLinks.offer(.deferred, .deferred(result)) {
+            log("Deferred deep link held until releaseDeepLinks()")
+            return
+        }
         deliver(result)
     }
 
     private func deliverDeepLink(_ url: URL) {
+        if heldDeepLinks.offer(.direct, .direct(url)) {
+            log("Deep link held until releaseDeepLinks()")
+            return
+        }
+        deliverDirect(url)
+    }
+
+    private func deliverDirect(_ url: URL) {
+        if let deepLinkCallback = stateLock.withLock({ self.deepLinkCallback }) {
+            #if canImport(UIKit)
+            DispatchQueue.main.async { deepLinkCallback(url) }
+            #else
+            deepLinkCallback(url)
+            #endif
+        }
         deliver(AttributionResult(
             attributed: false,
             deepLinkValue: url.absoluteString,

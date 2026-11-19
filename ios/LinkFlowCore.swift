@@ -283,6 +283,14 @@ public struct ParsedAttribution {
     public let attributionMethod: String?
     public let confidence: Double?
     public let isReinstall: Bool
+    /// 2.2.0+: the server's optional `match` object. Nil against older servers.
+    public let match: ParsedMatch?
+
+    /// Coarse category for diagnostics.
+    public var category: ResolveResultCategory { attributed ? .attributed : .organic }
+
+    /// An attributed result carrying a deferred deep link payload.
+    public var carriesDeepLink: Bool { attributed && (deepLinkValue != nil || !deepLinkParams.isEmpty) }
 
     public init(json: [String: Any]) {
         attributed = json["attributed"] as? Bool ?? false
@@ -294,6 +302,7 @@ public struct ParsedAttribution {
         attributionMethod = ParsedAttribution.nonEmptyString(json["attributionMethod"])
         confidence = ParsedAttribution.double(json["confidence"])
         isReinstall = json["isReinstall"] as? Bool ?? false
+        match = ParsedMatch(json: json["match"])
     }
 
     private static func nonEmptyString(_ value: Any?) -> String? {

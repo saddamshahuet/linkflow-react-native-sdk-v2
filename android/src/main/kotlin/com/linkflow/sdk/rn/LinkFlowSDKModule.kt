@@ -1,6 +1,7 @@
 package com.linkflow.sdk.rn
 
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.net.Uri
 import com.facebook.react.bridge.Arguments
 import com.facebook.react.bridge.Promise
@@ -29,6 +30,25 @@ class LinkFlowSDKModule(
     private var lastResult: LinkFlowSDK.AttributionResult? = null
 
     override fun getName(): String = NAME
+
+    /**
+     * `nativeLinkForwarding` is true when the app's MainActivity forwards
+     * `onNewIntent` to the SDK (the Expo config plugin sets this meta-data).
+     * JS then skips its own `Linking` listener so links are not handled twice.
+     */
+    override fun getConstants(): MutableMap<String, Any> = hashMapOf(
+        "nativeLinkForwarding" to readNativeLinkForwarding(),
+        "nativeSdkVersion" to LinkFlowSDK.SDK_VERSION,
+    )
+
+    private fun readNativeLinkForwarding(): Boolean = try {
+        val ctx = reactContext.applicationContext
+        @Suppress("DEPRECATION")
+        val info = ctx.packageManager.getApplicationInfo(ctx.packageName, PackageManager.GET_META_DATA)
+        info.metaData?.getBoolean(META_NATIVE_LINK_FORWARDING, false) ?: false
+    } catch (e: Exception) {
+        false
+    }
 
     @ReactMethod
     fun initialize(apiBaseURL: String, enableLogging: Boolean, options: ReadableMap?, promise: Promise) {
@@ -167,6 +187,38 @@ class LinkFlowSDKModule(
         }
     }
 
+    /** 2.2.0+: queue deep links until [releaseDeepLinks]. */
+    @ReactMethod
+    fun holdDeepLinks(promise: Promise) {
+        try {
+            LinkFlowSDK.getInstance().holdDeepLinks()
+            promise.resolve(null)
+        } catch (e: Exception) {
+            promise.reject("hold_deeplinks_failed", e.message, e)
+        }
+    }
+
+    /** 2.2.0+: deliver deep links queued while held. */
+    @ReactMethod
+    fun releaseDeepLinks(promise: Promise) {
+        try {
+            LinkFlowSDK.getInstance().releaseDeepLinks()
+            promise.resolve(null)
+        } catch (e: Exception) {
+            promise.reject("release_deeplinks_failed", e.message, e)
+        }
+    }
+
+    /** 2.2.0+: PII-free support snapshot. */
+    @ReactMethod
+    fun getDiagnostics(promise: Promise) {
+        try {
+            promise.resolve(mapToWritable(LinkFlowSDK.getInstance().getDiagnostics().toMap()))
+        } catch (e: Exception) {
+            promise.reject("diagnostics_failed", e.message, e)
+        }
+    }
+
     // RN's NativeEventEmitter expects these to exist on the native module.
     @ReactMethod fun addListener(eventName: String) { /* no-op */ }
     @ReactMethod fun removeListeners(count: Int) { /* no-op */ }
@@ -208,6 +260,12 @@ class LinkFlowSDKModule(
         if (r.attributionMethod != null) map.putString("attributionMethod", r.attributionMethod)
         if (r.confidence != null) map.putDouble("confidence", r.confidence)
         map.putBoolean("isReinstall", r.isReinstall)
+        r.match?.let { match ->
+            val m = Arguments.createMap()
+            m.putString("method", match.method)
+            match.confidence?.let { m.putDouble("confidence", it) }
+            map.putMap("match", m)
+        }
         return map
     }
 
@@ -235,5 +293,6 @@ class LinkFlowSDKModule(
         private const val EVENT_ATTRIBUTION = "LinkFlowAttribution"
         private const val EVENT_DEEPLINK = "LinkFlowDeepLink"
         private const val EVENT_ERROR = "LinkFlowError"
+        const val META_NATIVE_LINK_FORWARDING = "com.linkflow.sdk.NATIVE_LINK_FORWARDING"
     }
 }

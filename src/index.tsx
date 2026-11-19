@@ -10,6 +10,16 @@ import {
 } from 'react-native';
 import type { EmitterSubscription } from 'react-native';
 
+import {
+  carriesDeepLink,
+  deepLinkBus,
+  deferredLink,
+  directLink,
+} from './deepLinkBus';
+
+/** Version of this package; kept in step with the native SDKs it vendors. */
+export const SDK_VERSION = '2.2.0';
+
 const LINKING_ERROR =
   `The package '@linkflow/react-native-sdk' doesn't seem to be linked. Make sure: \n\n` +
   Platform.select({ ios: "- Run 'pod install'\n", default: '' }) +
@@ -49,6 +59,71 @@ export interface AttributionResult {
   confidence?: number;
   /** True when this device had already installed the app before. */
   isReinstall?: boolean;
+  /**
+   * 2.2.0+: how the server matched the install, when it reports a `match`
+   * object. Absent with older servers or native builds.
+   */
+  match?: AttributionMatch;
+}
+
+/** 2.2.0+: the server's match report for an install. */
+export interface AttributionMatch {
+  method: MatchMethod;
+  /** 0–1, when reported. */
+  confidence?: number;
+}
+
+export type MatchMethod =
+  | 'install_referrer'
+  | 'click_token'
+  | 'advertising_id'
+  | 'probabilistic'
+  | 'organic'
+  // Forward compatible: a newer server may report a method this version does not know.
+  | (string & {});
+
+/**
+ * 2.2.0+: support snapshot from `LinkFlow.getDiagnostics()`. Contains no
+ * identifiers or personal data: only versions, the API host, flags, counts
+ * and categories.
+ */
+export interface LinkFlowDiagnostics {
+  /** Version of this JS package. */
+  jsSdkVersion: string;
+  /** Version of the native SDK (absent on a native build older than 2.2.0). */
+  sdkVersion?: string;
+  platform?: 'ios' | 'android';
+  apiHost?: string;
+  appKeyConfigured?: boolean;
+  consentState?: 'not_required' | 'pending' | 'granted' | 'denied';
+  advertisingIdConsent?: boolean;
+  launchPendingConsent?: boolean;
+  hasInstallId?: boolean;
+  hasInstallToken?: boolean;
+  customerUserIdSet?: boolean;
+  attributionComplete?: boolean;
+  /** ISO-8601 time of the last attribution request's outcome. */
+  lastResolveAt?: string;
+  lastResolveResult?:
+    | 'attributed'
+    | 'organic'
+    | 'rejected'
+    | 'network_error'
+    | 'invalid_response';
+  lastMatchMethod?: string;
+  queuedEventCount?: number;
+  /** Native hold state. */
+  deepLinksHeld?: boolean;
+  heldDeepLinkCount?: number;
+  attributionCallbackSet?: boolean;
+  /** JS hold state (the hook / router adapter gate). */
+  jsDeepLinksHeld: boolean;
+  jsHeldDeepLinkCount: number;
+  /** True when the AppDelegate / MainActivity forwards links natively (Expo plugin). */
+  nativeLinkForwarding: boolean;
+  initialized: boolean;
+  /** False when the native build predates 2.2.0 and only JS fields are present. */
+  nativeDiagnosticsAvailable: boolean;
 }
 
 export type AttributionMethod =
@@ -123,6 +198,10 @@ class LinkFlow {
   private static linkingSubscription: EmitterSubscription | null = null;
   private static internalAttributionSub: EmitterSubscription | null = null;
   private static legacyCallbackSub: EmitterSubscription | null = null;
+  private static busAttributionSub: EmitterSubscription | null = null;
+  private static busDeepLinkSub: EmitterSubscription | null = null;
+  private static nativeHoldRequested = false;
+  private static warnedNoNativeHold = false;
 
   /**
    * Initialize the LinkFlow SDK. Must be called once at app launch before
@@ -159,7 +238,79 @@ class LinkFlow {
       }
     );
 
+    // Feed the JS deep-link gate used by useLinkFlowDeepLink / Expo Router.
+    this.busAttributionSub = eventEmitter.addListener(
+      EVENT_ATTRIBUTION,
+      (result: AttributionResult) => {
+        if (carriesDeepLink(result)) deepLinkBus.publish(deferredLink(result));
+      }
+    );
+    this.busDeepLinkSub = eventEmitter.addListener(
+      EVENT_DEEPLINK,
+      (event: DeepLinkEvent) => {
+        if (event?.url) deepLinkBus.publish(directLink(event.url));
+      }
+    );
+
+    // holdDeepLinks() may have been called before initialize().
+    if (this.nativeHoldRequested) {
+      await this.callNativeHold();
+    }
+
     this.setupDeepLinkListener();
+  }
+
+  /**
+   * 2.2.0+: hold deep links until `releaseDeepLinks()`, e.g. while a splash
+   * screen, onboarding or login is showing.
+   *
+   * While held, the deferred deep link and direct deep links are queued
+   * (latest of each kind) by the native SDK and by the JS gate behind
+   * `useLinkFlowDeepLink` and the Expo Router adapter. Attribution, events and
+   * `getAttributionResult()` are unaffected. May be called before
+   * `initialize()` so that even the first deferred link is held. Not held by
+   * default.
+   */
+  static async holdDeepLinks(): Promise<void> {
+    deepLinkBus.hold();
+    this.nativeHoldRequested = true;
+    if (this.initialized) await this.callNativeHold();
+  }
+
+  /** 2.2.0+: stop holding and deliver what was queued, in arrival order. */
+  static async releaseDeepLinks(): Promise<void> {
+    this.nativeHoldRequested = false;
+    // JS first, so links the native SDK releases next pass straight through.
+    deepLinkBus.release();
+    if (this.initialized && typeof NativeLinkFlow.releaseDeepLinks === 'function') {
+      await NativeLinkFlow.releaseDeepLinks();
+    }
+  }
+
+  /** 2.2.0+: true between `holdDeepLinks()` and `releaseDeepLinks()`. */
+  static isHoldingDeepLinks(): boolean {
+    return deepLinkBus.isHeld();
+  }
+
+  /**
+   * 2.2.0+: a support snapshot ("why didn't my deep link fire?"): SDK
+   * versions, API host, consent state, whether an install id exists, the last
+   * attribution outcome, queued events and hold state. Contains no
+   * identifiers or personal data.
+   */
+  static async getDiagnostics(): Promise<LinkFlowDiagnostics> {
+    const js = {
+      jsSdkVersion: SDK_VERSION,
+      jsDeepLinksHeld: deepLinkBus.isHeld(),
+      jsHeldDeepLinkCount: deepLinkBus.heldCount(),
+      nativeLinkForwarding: this.nativeLinkForwarding(),
+      initialized: this.initialized,
+    };
+    if (this.initialized && typeof NativeLinkFlow.getDiagnostics === 'function') {
+      const native = await NativeLinkFlow.getDiagnostics();
+      return { ...native, ...js, nativeDiagnosticsAvailable: true };
+    }
+    return { ...js, nativeDiagnosticsAvailable: false };
   }
 
   /**
@@ -301,12 +452,42 @@ class LinkFlow {
     this.internalAttributionSub = null;
     this.legacyCallbackSub?.remove();
     this.legacyCallbackSub = null;
+    this.busAttributionSub?.remove();
+    this.busAttributionSub = null;
+    this.busDeepLinkSub?.remove();
+    this.busDeepLinkSub = null;
+    this.nativeHoldRequested = false;
+    deepLinkBus.reset();
     this.initialized = false;
     this.lastResult = null;
   }
 
+  private static async callNativeHold(): Promise<void> {
+    if (typeof NativeLinkFlow.holdDeepLinks === 'function') {
+      await NativeLinkFlow.holdDeepLinks();
+    } else if (!this.warnedNoNativeHold) {
+      this.warnedNoNativeHold = true;
+      console.warn(
+        '[LinkFlow] holdDeepLinks requires native SDK 2.2.0+ for addDeepLinkListener/addAttributionListener; ' +
+          'only useLinkFlowDeepLink and the Expo Router adapter are held. Rebuild the app.'
+      );
+    }
+  }
+
+  /** True when the app forwards links natively (Expo config plugin), so JS must not forward them again. */
+  private static nativeLinkForwarding(): boolean {
+    try {
+      return NativeLinkFlow.nativeLinkForwarding === true;
+    } catch {
+      return false;
+    }
+  }
+
   private static setupDeepLinkListener(): void {
     if (this.linkingSubscription) return;
+    // With native forwarding (AppDelegate / MainActivity) the native SDK already
+    // receives every link; forwarding it from JS as well would deliver it twice.
+    if (this.nativeLinkForwarding()) return;
     this.linkingSubscription = Linking.addEventListener('url', ({ url }) => {
       if (url) {
         NativeLinkFlow.handleDeepLink(url).catch((err: unknown) =>
@@ -339,3 +520,15 @@ export function consentSignals(
 
 export default LinkFlow;
 export { LinkFlow };
+
+export type { LinkFlowDeepLink, LinkFlowDeepLinkType } from './deepLinkBus';
+export {
+  configureLinkFlowRouter,
+  createLinkFlowRedirectSystemPath,
+  deepLinkToPath,
+  resolveLinkFlowPath,
+  shortLinkCode,
+} from './expoRouter';
+export type { LinkFlowRouterOptions, RedirectSystemPathEvent } from './expoRouter';
+export { useLinkFlowDeepLink } from './useLinkFlowDeepLink';
+export type { LinkFlowRoutedDeepLink } from './useLinkFlowDeepLink';

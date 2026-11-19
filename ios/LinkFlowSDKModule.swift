@@ -24,6 +24,16 @@ public class LinkFlowSDKModule: RCTEventEmitter {
     public override func startObserving() { hasListeners = true }
     public override func stopObserving()  { hasListeners = false }
 
+    /// `nativeLinkForwarding` is true when the AppDelegate forwards links to
+    /// ``LinkFlowLinkForwarder`` (the Expo config plugin sets the Info.plist
+    /// flag). JS then skips its own `Linking` listener so links are not handled twice.
+    @objc public func constantsToExport() -> [AnyHashable: Any]! {
+        [
+            "nativeLinkForwarding": Bundle.main.object(forInfoDictionaryKey: "LinkFlowNativeLinkForwarding") as? Bool ?? false,
+            "nativeSdkVersion": LinkFlowSDK.sdkVersion,
+        ]
+    }
+
     // MARK: - Exposed methods
 
     @objc(initialize:enableLogging:options:resolver:rejecter:)
@@ -41,9 +51,7 @@ public class LinkFlowSDKModule: RCTEventEmitter {
             manageConversionValues: options?["manageConversionValues"] as? Bool ?? false
         )
         let sdk = LinkFlowSDK.initialize(config: config)
-        sdk.setAttributionCallback { [weak self] result in
-            self?.handleResult(result)
-        }
+        attachCallbacks(sdk)
         resolve(nil)
     }
 
@@ -111,10 +119,8 @@ public class LinkFlowSDKModule: RCTEventEmitter {
                          rejecter reject: @escaping RCTPromiseRejectBlock) {
         do {
             let sdk = try LinkFlowSDK.shared()
-            // Reattach callback (bridge may be recreated across reloads).
-            sdk.setAttributionCallback { [weak self] result in
-                self?.handleResult(result)
-            }
+            // Reattach callbacks (bridge may be recreated across reloads).
+            attachCallbacks(sdk)
             sdk.handleAppLaunch(userActivity: nil)
             // If a launch URL is provided, treat it as a custom-scheme deep link.
             if let urlString = initialUrl as String?,
@@ -138,12 +144,9 @@ public class LinkFlowSDKModule: RCTEventEmitter {
         }
         do {
             let sdk = try LinkFlowSDK.shared()
+            // The SDK emits LinkFlowDeepLink through the deep link callback
+            // (see attachCallbacks), so the event honours holdDeepLinks().
             _ = sdk.handleCustomURL(url: url)
-            // Also emit a JS-level deep-link event for consumers that want
-            // raw URL notifications independent of attribution callbacks.
-            if hasListeners {
-                sendEvent(withName: "LinkFlowDeepLink", body: ["url": url.absoluteString])
-            }
             resolve(nil)
         } catch {
             reject("not_initialized", error.localizedDescription, error)
@@ -184,7 +187,49 @@ public class LinkFlowSDKModule: RCTEventEmitter {
         resolve(serialize(result))
     }
 
+    @objc(holdDeepLinks:rejecter:)
+    func holdDeepLinks(_ resolve: @escaping RCTPromiseResolveBlock,
+                       rejecter reject: @escaping RCTPromiseRejectBlock) {
+        do {
+            try LinkFlowSDK.shared().holdDeepLinks()
+            resolve(nil)
+        } catch {
+            reject("not_initialized", error.localizedDescription, error)
+        }
+    }
+
+    @objc(releaseDeepLinks:rejecter:)
+    func releaseDeepLinks(_ resolve: @escaping RCTPromiseResolveBlock,
+                          rejecter reject: @escaping RCTPromiseRejectBlock) {
+        do {
+            try LinkFlowSDK.shared().releaseDeepLinks()
+            resolve(nil)
+        } catch {
+            reject("not_initialized", error.localizedDescription, error)
+        }
+    }
+
+    @objc(getDiagnostics:rejecter:)
+    func getDiagnostics(_ resolve: @escaping RCTPromiseResolveBlock,
+                        rejecter reject: @escaping RCTPromiseRejectBlock) {
+        do {
+            resolve(try LinkFlowSDK.shared().getDiagnostics())
+        } catch {
+            reject("not_initialized", error.localizedDescription, error)
+        }
+    }
+
     // MARK: - Internal
+
+    private func attachCallbacks(_ sdk: LinkFlowSDK) {
+        sdk.setAttributionCallback { [weak self] result in
+            self?.handleResult(result)
+        }
+        sdk.setDeepLinkCallback { [weak self] url in
+            guard let self, self.hasListeners else { return }
+            self.sendEvent(withName: "LinkFlowDeepLink", body: ["url": url.absoluteString])
+        }
+    }
 
     private func handleResult(_ result: AttributionResult) {
         self.lastResult = result
@@ -210,6 +255,36 @@ public class LinkFlowSDKModule: RCTEventEmitter {
         if let m = result.attributionMethod { out["attributionMethod"] = m }
         // -1 is the ObjC-representable stand-in for "no confidence reported".
         if result.confidence >= 0 { out["confidence"] = result.confidence }
+        if let match = result.match {
+            var m: [String: Any] = ["method": match.method]
+            if match.confidence >= 0 { m["confidence"] = match.confidence }
+            out["match"] = m
+        }
         return out
+    }
+}
+
+/// Entry point for links received by a running app (2.2.0+).
+///
+/// The Expo config plugin calls this from the AppDelegate's `open url` and
+/// `continue userActivity` methods. Bare apps can add the same calls and set
+/// `LinkFlowNativeLinkForwarding` (Boolean, YES) in Info.plist so the JS layer
+/// does not also forward the same link.
+///
+/// Does nothing before `LinkFlow.initialize()`. A cold-start link is picked up
+/// by `LinkFlow.handleAppLaunch()` instead.
+@objc(LinkFlowLinkForwarder)
+public class LinkFlowLinkForwarder: NSObject {
+
+    @objc(openURL:)
+    public static func open(_ url: URL) {
+        guard let sdk = try? LinkFlowSDK.shared() else { return }
+        _ = sdk.handleCustomURL(url: url)
+    }
+
+    @objc(continueUserActivity:)
+    public static func continueUserActivity(_ userActivity: NSUserActivity) {
+        guard let sdk = try? LinkFlowSDK.shared() else { return }
+        _ = sdk.handleUniversalLink(userActivity: userActivity)
     }
 }
