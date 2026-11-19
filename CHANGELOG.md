@@ -5,6 +5,63 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.2.0] - 2026-11-19
+
+Vendored native sources updated to Android SDK 2.2.0 and iOS SDK 2.2.0.
+
+### Added
+- `LinkFlow.holdDeepLinks()` / `releaseDeepLinks()` / `isHoldingDeepLinks()`:
+  queue deferred and direct deep links (latest per kind) until the app can
+  navigate. Can be called before `initialize()`. Not held by default.
+- Organic installs: the native SDKs store `installId` / `installToken` when the
+  server returns them for unmatched installs (server 2.2+), so organic users'
+  events and revenue are delivered.
+- `AttributionResult.match` (`{ method, confidence? }`), when the server
+  reports it.
+- `LinkFlow.getDiagnostics()`: native and JS SDK versions, API host, consent
+  state, install id presence, last resolve time and category, queued events,
+  hold state and native link forwarding. It contains no identifiers or
+  personal data.
+- **Expo config plugin** (`app.plugin.js`): Associated Domains, URL scheme,
+  optional `NSUserTrackingUsageDescription` and postback-copy endpoints,
+  AppDelegate forwarding (Swift for Expo SDK 53+, Objective-C for SDK 52),
+  `autoVerify` App Links and scheme intent filters, and `onNewIntent`
+  forwarding in MainActivity. Idempotent across repeated `expo prebuild` runs.
+  `@expo/config-plugins` is an optional peer dependency.
+- **Expo Router adapter:** `createLinkFlowRedirectSystemPath()` for
+  `app/+native-intent.tsx`, and `useLinkFlowDeepLink()` for deferred and
+  direct links. Both honour hold/release and never navigate twice for the
+  same URL.
+- `LinkFlowLinkForwarder` (iOS and Android), the native entry point the plugin
+  calls. Bare apps can call it too.
+- `SDK_VERSION` export.
+
+### Changed
+- iOS: `LinkFlowDeepLink` events are now emitted through the SDK's deep-link
+  callback, so they honour `holdDeepLinks()`. As a result, the launch URL
+  passed to `handleAppLaunch()` also emits `LinkFlowDeepLink` on iOS, which
+  Android already did.
+- When the app forwards links natively (`nativeLinkForwarding`, set by the
+  Expo plugin), JS no longer also forwards `Linking` URLs, so a link is not
+  handled twice. Apps without the plugin are unaffected.
+- Android library `versionName` corrected from the stale `1.1.0` to `2.2.0`.
+
+### Fixed
+- iOS: the launch URL now reaches the SDK's launch handling, so a
+  `click_token` in it is sent with the first-launch resolve request and
+  deterministic (click token) attribution works, as on Android. The bridge
+  used to call `handleAppLaunch(userActivity: nil)` and drop the URL. The URL
+  comes from `Linking.getInitialURL()` or, if JS has none, from a link that
+  `LinkFlowLinkForwarder` received before `initialize()`. As in 2.1, the
+  launch URL is still delivered as a deep link exactly once.
+- Android: `deepLinkParams` sent by the server as a JSON string (how link
+  params are stored) are now decoded instead of arriving empty.
+
+### Compatibility
+- **Fully backward compatible.** No API was removed or renamed. All additions
+  are optional. The JS layer feature-detects the new native methods and
+  degrades on an older native build.
+
 ## [2.1.0] - 2026-10-14
 
 Vendored native sources updated to Android SDK 2.1.0 and iOS SDK 2.1.0.

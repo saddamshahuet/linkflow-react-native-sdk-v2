@@ -27,6 +27,9 @@ final class LinkFlowStore {
         static let lastResult = "linkflow_last_attribution_result"
         static let customerUserID = "linkflow_customer_user_id"
         static let pendingIdentify = "linkflow_pending_identify"
+        static let lastResolveAt = "linkflow_last_resolve_at"
+        static let lastResolveResult = "linkflow_last_resolve_result"
+        static let lastMatchMethod = "linkflow_last_match_method"
 
         /// Pre-2.0 keys, read once so an upgrading app does not re-resolve.
         static let legacyInstallID = "linkflow_install_id"
@@ -86,6 +89,35 @@ final class LinkFlowStore {
     var pendingIdentify: Bool {
         get { defaults.bool(forKey: Key.pendingIdentify) }
         set { defaults.set(newValue, forKey: Key.pendingIdentify) }
+    }
+
+    // MARK: - Diagnostics (2.2.0+)
+
+    /// When the last attribution request finished, successfully or not.
+    var lastResolveAt: Date? {
+        get { defaults.object(forKey: Key.lastResolveAt) as? Date }
+        set { defaults.set(newValue, forKey: Key.lastResolveAt) }
+    }
+
+    /// ``ResolveResultCategory`` raw value of the last attribution request.
+    var lastResolveResult: String? {
+        get { defaults.string(forKey: Key.lastResolveResult) }
+        set { defaults.set(newValue, forKey: Key.lastResolveResult) }
+    }
+
+    /// `match.method` from the last successful resolve, when reported.
+    var lastMatchMethod: String? {
+        get { defaults.string(forKey: Key.lastMatchMethod) }
+        set { defaults.set(newValue, forKey: Key.lastMatchMethod) }
+    }
+
+    /// Records the outcome of an attribution request for ``LinkFlowDiagnostics``.
+    func recordResolve(_ category: ResolveResultCategory, matchMethod: String? = nil, at date: Date = Date()) {
+        lastResolveAt = date
+        lastResolveResult = category.rawValue
+        if category == .attributed || category == .organic {
+            lastMatchMethod = matchMethod
+        }
     }
 
     /// Test/reset hook.

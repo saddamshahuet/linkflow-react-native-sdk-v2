@@ -1,6 +1,6 @@
 {
   "name": "@linkflow/react-native-sdk",
-  "version": "2.1.0",
+  "version": "2.2.0",
   "description": "LinkFlow SDK for React Native - Mobile attribution and deep linking",
   "main": "lib/commonjs/index",
   "module": "lib/module/index",
@@ -14,6 +14,8 @@
     "ios",
     "cpp",
     "*.podspec",
+    "app.plugin.js",
+    "plugin/src",
     "!lib/typescript/example",
     "!ios/build",
     "!android/build",
@@ -43,7 +45,9 @@
     "deep-linking",
     "linkflow",
     "mobile-marketing",
-    "deferred-deep-links"
+    "deferred-deep-links",
+    "expo",
+    "expo-router"
   ],
   "repository": {
     "type": "git",
@@ -59,19 +63,23 @@
     "registry": "https://registry.npmjs.org/"
   },
   "devDependencies": {
+    "@expo/config-plugins": "^9.1.7",
     "@react-native-community/eslint-config": "^3.2.0",
     "@types/jest": "^29.5.14",
     "@types/react": "~18.2.45",
     "@types/react-native": "0.72.8",
+    "@types/react-test-renderer": "18.0.7",
     "eslint": "^8.56.0",
     "jest": "^29.7.0",
     "prettier": "^3.1.1",
     "react": "18.2.0",
     "react-native": "0.73.2",
     "react-native-builder-bob": "^0.23.2",
+    "react-test-renderer": "18.2.0",
     "typescript": "5.3.3"
   },
   "peerDependencies": {
+    "@expo/config-plugins": ">=8.0.0",
     "react": "*",
     "react-native": "*"
   },
@@ -103,5 +111,10 @@
         }
       ]
     ]
+  },
+  "peerDependenciesMeta": {
+    "@expo/config-plugins": {
+      "optional": true
+    }
   }
 }
