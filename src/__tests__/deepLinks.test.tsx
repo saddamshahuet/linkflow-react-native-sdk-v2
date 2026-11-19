@@ -155,6 +155,25 @@ describe('getDiagnostics', () => {
   });
 });
 
+describe('handleAppLaunch', () => {
+  it('passes the launch URL to native so its click_token reaches attribution', async () => {
+    (Linking.getInitialURL as jest.Mock).mockResolvedValueOnce(
+      'https://go.example.com/AbC123?click_token=tok123'
+    );
+    await LinkFlow.initialize();
+    await LinkFlow.handleAppLaunch();
+    expect(mockNative.handleAppLaunch).toHaveBeenCalledWith(
+      'https://go.example.com/AbC123?click_token=tok123'
+    );
+  });
+
+  it('passes null when there is no launch URL, so native can use one it captured itself', async () => {
+    await LinkFlow.initialize();
+    await LinkFlow.handleAppLaunch();
+    expect(mockNative.handleAppLaunch).toHaveBeenCalledWith(null);
+  });
+});
+
 describe('native link forwarding', () => {
   it('JS forwards Linking URLs to native by default', async () => {
     await LinkFlow.initialize();

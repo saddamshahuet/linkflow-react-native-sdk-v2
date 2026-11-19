@@ -47,6 +47,13 @@ Vendored native sources updated to Android SDK 2.2.0 and iOS SDK 2.2.0.
 - Android library `versionName` corrected from the stale `1.1.0` to `2.2.0`.
 
 ### Fixed
+- iOS: the launch URL now reaches the SDK's launch handling, so a
+  `click_token` in it is sent with the first-launch resolve request and
+  deterministic (click token) attribution works, as on Android. The bridge
+  used to call `handleAppLaunch(userActivity: nil)` and drop the URL. The URL
+  comes from `Linking.getInitialURL()` or, if JS has none, from a link that
+  `LinkFlowLinkForwarder` received before `initialize()`. As in 2.1, the
+  launch URL is still delivered as a deep link exactly once.
 - Android: `deepLinkParams` sent by the server as a JSON string (how link
   params are stored) are now decoded instead of arriving empty.
 

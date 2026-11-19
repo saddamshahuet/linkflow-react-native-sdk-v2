@@ -121,12 +121,24 @@ public class LinkFlowSDKModule: RCTEventEmitter {
             let sdk = try LinkFlowSDK.shared()
             // Reattach callbacks (bridge may be recreated across reloads).
             attachCallbacks(sdk)
-            sdk.handleAppLaunch(userActivity: nil)
-            // If a launch URL is provided, treat it as a custom-scheme deep link.
-            if let urlString = initialUrl as String?,
-               !urlString.isEmpty,
-               let url = URL(string: urlString) {
-                _ = sdk.handleCustomURL(url: url)
+            let jsURL = LinkFlowLaunchURL.parse(initialUrl as String?)
+            let launchURL = LinkFlowLaunchURL.launchURL(
+                jsInitialURL: initialUrl as String?,
+                captured: LinkFlowLaunchURL.shared.take()
+            )
+            let firstLaunch = !sdk.diagnostics().attributionComplete
+
+            // Pass the launch URL into launch handling, as Android does. On the
+            // first launch the SDK reads its click_token for deterministic
+            // attribution; on later launches it delivers the URL as a deep link.
+            // This used to pass nil, so the click_token never reached resolve.
+            sdk.handleAppLaunch(url: launchURL)
+
+            // 2.1 also delivered the JS launch URL as a direct deep link on the
+            // first launch. Keep that. On later launches handleAppLaunch(url:)
+            // has delivered it already, so it is not delivered twice.
+            if firstLaunch, let jsURL {
+                _ = sdk.handleCustomURL(url: jsURL)
             }
             resolve(nil)
         } catch {
@@ -271,20 +283,29 @@ public class LinkFlowSDKModule: RCTEventEmitter {
 /// `LinkFlowNativeLinkForwarding` (Boolean, YES) in Info.plist so the JS layer
 /// does not also forward the same link.
 ///
-/// Does nothing before `LinkFlow.initialize()`. A cold-start link is picked up
-/// by `LinkFlow.handleAppLaunch()` instead.
+/// A link received before `LinkFlow.initialize()` (a cold start) is kept and
+/// handed to `LinkFlow.handleAppLaunch()`, so its click_token is attributed.
 @objc(LinkFlowLinkForwarder)
 public class LinkFlowLinkForwarder: NSObject {
 
     @objc(openURL:)
     public static func open(_ url: URL) {
-        guard let sdk = try? LinkFlowSDK.shared() else { return }
+        guard let sdk = try? LinkFlowSDK.shared() else {
+            // Before initialize(): keep it so handleAppLaunch can attribute from it.
+            LinkFlowLaunchURL.shared.record(url)
+            return
+        }
         _ = sdk.handleCustomURL(url: url)
     }
 
     @objc(continueUserActivity:)
     public static func continueUserActivity(_ userActivity: NSUserActivity) {
-        guard let sdk = try? LinkFlowSDK.shared() else { return }
+        guard let sdk = try? LinkFlowSDK.shared() else {
+            if userActivity.activityType == NSUserActivityTypeBrowsingWeb, let url = userActivity.webpageURL {
+                LinkFlowLaunchURL.shared.record(url)
+            }
+            return
+        }
         _ = sdk.handleUniversalLink(userActivity: userActivity)
     }
 }
